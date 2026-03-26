@@ -1,0 +1,910 @@
+/* global JSZip, saveAs */
+const $ = (id) => document.getElementById(id);
+
+let templateText = "";
+let templateName = "";
+let articleRawText = "";
+let uploadedImages = [];
+let lockedImages = [];
+
+function isImgLockOn(){
+  const el = $("chkImgLock");
+  return el ? !!el.checked : true;
+}
+
+function setImgUploadInfo(){
+  const info = $("imgUploadInfo");
+  if(!info) return;
+  const n = lockedImages.length;
+  if(n){
+    info.innerHTML = `Gambar terkunci: <strong>${n}</strong> file. (Upload template tidak akan menghapusnya)`;
+  }else{
+    info.textContent = "Belum ada gambar yang dikunci.";
+  }
+}
+
+function setStatus(type, msg){
+  const el = $("status");
+  el.className = `status ${type}`;
+  el.textContent = msg;
+}
+function escapeHtml(s){
+  return String(s).replace(/[&<>"']/g, (m)=>({
+    "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"
+  }[m]));
+}
+function report(items){
+  const wrap = $("report");
+  wrap.innerHTML = "";
+  for(const it of items){
+    const div = document.createElement("div");
+    div.className = "item";
+    div.innerHTML = `<div class="k">${escapeHtml(it.k)}</div><div class="v">${it.v}</div>`;
+    wrap.appendChild(div);
+  }
+}
+function lines(text){
+  return text.split(/\r?\n/).map(s=>s.trim()).filter(Boolean);
+}
+
+// Parse artikel blocks using markers:
+// -###-  (start marker on its own line)
+// ...
+// -$$$-  (end marker on its own line)
+function parseArticleBlocks(text){
+  const s = String(text || "");
+  const re = /-###-\s*([\s\S]*?)\s*-\$\$\$-/g;
+  const out = [];
+  let m;
+  while((m = re.exec(s))){
+    const block = (m[1] ?? "").trim();
+    if(block) out.push(block);
+  }
+  return out;
+}
+function filenameFromLink(url){
+  try{
+    const u = new URL(url);
+    const path = u.pathname.split("/").filter(Boolean);
+    let base = path[path.length-1] || "artikel.html";
+    if(!base.toLowerCase().endsWith(".html")) base += ".html";
+    base = base.replace(/[\\/:*?"<>|]+/g, "-");
+    return base;
+  }catch{
+    return "artikel.html";
+  }
+}
+
+function safeFilename(name){
+  return String(name || "")
+    .replace(/[\\/:*?"<>|]+/g, "-")
+    .replace(/\s+/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^[-.]+|[-.]+$/g, "")
+    .slice(0, 180) || "file";
+}
+
+function imageNameFromUrl(url, fallbackExt){
+  // Use last path segment from URL as desired output name.
+  // If URL has no extension, use uploaded file extension.
+  try{
+    const u = new URL(url);
+    let base = u.pathname.split("/").filter(Boolean).pop() || "image";
+    base = decodeURIComponent(base);
+    const hasExt = /\.[a-z0-9]{2,5}$/i.test(base);
+    if(!hasExt && fallbackExt) base += fallbackExt;
+    return safeFilename(base);
+  }catch{
+    return safeFilename("image" + (fallbackExt || ""));
+  }
+}
+
+// Integrity masking helpers
+function maskTemplateWithTokens(text, phTitle, phLink, phImg, phArticle){
+  return text.split(phTitle).join("__PH_TITLE__")
+             .split(phLink).join("__PH_LINK__")
+             .split(phImg).join("__PH_IMG__")
+             .split(phArticle).join("__PH_ARTICLE__");
+}
+function maskOutputToTokens(text, title, link, img, article){
+  return text.split(title).join("__PH_TITLE__")
+             .split(link).join("__PH_LINK__")
+             .split(img).join("__PH_IMG__")
+             .split(article).join("__PH_ARTICLE__");
+}
+
+async function loadTemplate(file){
+  templateText = await file.text();
+  templateName = file.name || "template.html";
+  $("tplMeta").textContent = `${templateName} • ${templateText.length.toLocaleString()} karakter`;
+  // Jangan menimpa state gambar yang sudah diupload (drag lock mode)
+  if(lockedImages.length && isImgLockOn()){
+    setStatus("ok", `Template dimuat. Gambar tetap terkunci (${lockedImages.length} file).`);
+  }else{
+    setStatus("ok", "Template dimuat. Silakan isi data.");
+  }
+  report([{k:"Template loaded", v:`<code>${escapeHtml(templateName)}</code>`}]);
+}
+
+$("templateFile").addEventListener("change", async (e)=>{
+  const f = e.target.files?.[0];
+  if(!f) return;
+  await loadTemplate(f);
+});
+
+// drag & drop
+const dz = $("dropzone");
+dz.addEventListener("dragover", (e)=>{ e.preventDefault(); dz.style.borderColor="rgba(59,130,246,.75)"; });
+dz.addEventListener("dragleave", ()=>{ dz.style.borderColor="rgba(255,255,255,.22)"; });
+dz.addEventListener("drop", async (e)=>{
+  e.preventDefault();
+  dz.style.borderColor="rgba(255,255,255,.22)";
+  const f = e.dataTransfer?.files?.[0];
+  if(f) await loadTemplate(f);
+});
+
+$("btnReset").addEventListener("click", ()=>{
+  templateText = ""; templateName = "";
+  articleRawText = "";
+  $("templateFile").value = "";
+  $("tplMeta").textContent = "Belum dimuat";
+  $("titles").value = "";
+  $("links").value = "";
+  $("images").value = "";
+  $("articles").value = "";
+  $("articleFile").value = "";
+  $("imageFiles").value = "";
+  uploadedImages = [];
+  lockedImages = [];
+  setImgUploadInfo();
+  $("zipName").value = "artikel-output.zip";
+  $("phTitle").value = "*JUDUL*";
+  $("phLink").value = "*LINK*";
+  $("phImg").value = "*GAMBAR*";
+  $("phArticle").value = "*ARTIKEL*";
+  $("chkStrict").checked = true;
+  $("chkNameFromLink").checked = true;
+  $("chkAutoRefresh").checked = true;
+  
+  // reset image generator (if present on this page)
+  if($("imgDomain")) $("imgDomain").value = "";
+  if($("imgBaseName")) $("imgBaseName").value = "";
+  if($("imgExt")) $("imgExt").value = "";
+  if($("imgCount")) $("imgCount").value = "10";
+  localStorage.removeItem("runa_img_domain");
+  localStorage.removeItem("runa_img_base");
+  localStorage.removeItem("runa_img_ext");
+  localStorage.removeItem("runa_img_count");
+  localStorage.removeItem("runa_img_out");
+  if($("imgGenStatus")) { $("imgGenStatus").className = "status idle"; $("imgGenStatus").textContent = "Isi box → klik Generate."; }
+  // reset anchor converter (if present on this page)
+  if($("anchorInput")) $("anchorInput").value = "";
+  if($("anchorStatus")) { $("anchorStatus").className = "status idle"; $("anchorStatus").textContent = "Tempel anchor HTML → klik Convert."; }
+
+  setStatus("idle", "Reset selesai.");
+  report([]);
+});
+
+$("btnLoadSample").addEventListener("click", ()=>{
+  $("titles").value = ["Judul Contoh 1","Judul Contoh 2"].join("\n");
+  $("links").value  = ["https://example.com/fyp/contoh-1.html","https://example.com/fyp/contoh-2.html"].join("\n");
+  $("images").value = ["https://example.com/img/1.webp","https://example.com/img/2.webp"].join("\n");
+  $("articles").value = [
+    "-###-\n<p>Ini contoh artikel panjang 1. Anda bisa menulis HTML lengkap di sini.</p>\n-$$$-",
+    "-###-\n<p>Ini contoh artikel panjang 2. Pastikan marker <strong>-###-</strong> dan <strong>-$$$-</strong> ada di baris sendiri.</p>\n-$$$-"
+  ].join("\n");
+  setStatus("warn", "Contoh data terisi. Ganti dengan data asli.");
+  report([{k:"Sample", v:"Data contoh sudah diisi."}]);
+});
+
+// load artikel.txt (optional)
+$("articleFile").addEventListener("change", async (e)=>{
+  const f = e.target.files?.[0];
+  if(!f) return;
+  articleRawText = await f.text();
+  $("articles").value = articleRawText;
+  setStatus("ok", `Artikel dimuat dari file: ${f.name}`);
+  report([{k:"Artikel loaded", v:`<code>${escapeHtml(f.name)}</code> • ${articleRawText.length.toLocaleString()} karakter`}]);
+});
+
+// load images (optional)
+$("imageFiles").addEventListener("change", (e)=>{
+  const picked = Array.from(e.target.files || []);
+  uploadedImages = picked;
+  if(isImgLockOn()){
+    // Drag lock mode: simpan referensi File di memori agar tidak hilang saat template di-upload
+    lockedImages = picked;
+  }
+  if(picked.length){
+    setStatus("ok", isImgLockOn()
+      ? `Gambar dikunci: ${picked.length} file`
+      : `Gambar dipilih: ${picked.length} file`);
+    report([{k:"Images selected", v:`${picked.length} file (akan di-rename mengikuti daftar GAMBAR)`}]);
+  }else{
+    if(isImgLockOn()) lockedImages = [];
+  }
+  setImgUploadInfo();
+});
+
+// Inisialisasi label lock info
+setImgUploadInfo();
+
+// Jika lock dimatikan/dihidupkan, update label dan (jika lock dinyalakan) salin state upload terakhir
+const _lock = $("chkImgLock");
+if(_lock){
+  _lock.addEventListener("change", ()=>{
+    if(isImgLockOn() && uploadedImages.length){
+      lockedImages = uploadedImages.slice();
+    }
+    setImgUploadInfo();
+  });
+}
+
+function validateBasics(){
+  if(!templateText){
+    setStatus("bad", "ERROR: Template belum di-upload.");
+    return { ok:false };
+  }
+  const phTitle = $("phTitle").value;
+  const phLink  = $("phLink").value;
+  const phImg   = $("phImg").value;
+  const phArticle = $("phArticle").value;
+  if(!phTitle || !phLink || !phImg || !phArticle){
+    setStatus("bad", "ERROR: Placeholder tidak boleh kosong.");
+    return { ok:false };
+  }
+  const missing = [];
+  if(!templateText.includes(phTitle)) missing.push(phTitle);
+  if(!templateText.includes(phLink))  missing.push(phLink);
+  if(!templateText.includes(phImg))   missing.push(phImg);
+  if(!templateText.includes(phArticle)) missing.push(phArticle);
+  if(missing.length){
+    setStatus("bad", `ERROR: Placeholder tidak ditemukan di template: ${missing.join(", ")}`);
+    report([{k:"Placeholder missing", v:`<code>${escapeHtml(missing.join(", "))}</code>`}]);
+    return { ok:false };
+  }
+
+  const arrTitle = lines($("titles").value);
+  const arrLink  = lines($("links").value);
+  const arrImg   = lines($("images").value);
+  const arrArticle = parseArticleBlocks($("articles").value);
+  const n = Math.max(arrTitle.length, arrLink.length, arrImg.length);
+
+  const effectiveUploads = (isImgLockOn() && lockedImages.length) ? lockedImages : uploadedImages;
+  if(effectiveUploads.length && effectiveUploads.length !== n){
+    setStatus("bad", `ERROR: Jumlah file gambar yang di-upload tidak sama. Upload=${effectiveUploads.length}, Baris=${n}.`);
+    report([{k:"Upload gambar", v:`Upload=<code>${effectiveUploads.length}</code>, Baris=<code>${n}</code>. Samakan jumlahnya agar rename sesuai daftar GAMBAR.`}]);
+    return { ok:false };
+  }
+
+  if(n === 0){
+    setStatus("bad", "ERROR: Data kosong. Isi minimal 1 baris.");
+    return { ok:false };
+  }
+  if(arrTitle.length !== n || arrLink.length !== n || arrImg.length !== n){
+    setStatus("bad", `ERROR: Jumlah baris tidak sama. Judul=${arrTitle.length}, Link=${arrLink.length}, Gambar=${arrImg.length}`);
+    report([{k:"Jumlah baris", v:`Judul=<code>${arrTitle.length}</code>, Link=<code>${arrLink.length}</code>, Gambar=<code>${arrImg.length}</code>`}]);
+    return { ok:false };
+  }
+
+  if(arrArticle.length !== n){
+    setStatus("bad", `ERROR: Jumlah blok ARTIKEL tidak sama. Artikel=${arrArticle.length}, Baris=${n}. Pastikan format marker -###- ... -$$$- benar.`);
+    report([
+      {k:"Artikel blocks", v:`Artikel=<code>${arrArticle.length}</code>, Baris=<code>${n}</code>`},
+      {k:"Format", v:`Gunakan marker pembuka <code>-###-</code> dan penutup <code>-$$$-</code> (di baris sendiri).`}
+    ]);
+    return { ok:false };
+  }
+
+  return { ok:true, phTitle, phLink, phImg, phArticle, arrTitle, arrLink, arrImg, arrArticle, n };
+}
+
+
+function qualityGate(payload){
+  const { arrTitle, arrLink, arrImg, n } = payload;
+  const warnings = [];
+  const errors = [];
+
+  const isLikelyUrl = (u)=>/^https?:\/\/|^\//i.test(u) || /^[a-z0-9\-_.]+\/[^\s]+$/i.test(u);
+  const hasScheme = (u)=>/^https?:\/\//i.test(u);
+
+  // Empty/whitespace (should already be prevented by lines(), but keep safe)
+  for(let i=0;i<n;i++){
+    if(!String(arrTitle[i]||"").trim()) errors.push({type:"judul_kosong", i, value:arrTitle[i]});
+    if(!String(arrLink[i]||"").trim())  errors.push({type:"link_kosong", i, value:arrLink[i]});
+    if(!String(arrImg[i]||"").trim())   errors.push({type:"gambar_kosong", i, value:arrImg[i]});
+  }
+
+  // URL format checks (warnings)
+  const badLinks = [];
+  const badImgs = [];
+  const noSchemeLinks = [];
+  for(let i=0;i<n;i++){
+    const link = String(arrLink[i]||"").trim();
+    const img  = String(arrImg[i]||"").trim();
+    if(link && !isLikelyUrl(link)) badLinks.push({i, v:link});
+    if(link && isLikelyUrl(link) && !hasScheme(link) && !link.startsWith("/")) noSchemeLinks.push({i, v:link});
+    if(img && !isLikelyUrl(img)) badImgs.push({i, v:img});
+  }
+  if(badLinks.length){
+    warnings.push({
+      k:"Quality Gate: LINK format",
+      v:`Ada <code>${badLinks.length}</code> link yang formatnya tidak terlihat seperti URL. Contoh: <code>${escapeHtml(badLinks[0].v)}</code> (baris #${badLinks[0].i+1}).`
+    });
+  }
+  if(noSchemeLinks.length){
+    warnings.push({
+      k:"Quality Gate: LINK tanpa http/https",
+      v:`Ada <code>${noSchemeLinks.length}</code> link tanpa skema <code>http/https</code>. Jika ini memang relative, abaikan. Contoh: <code>${escapeHtml(noSchemeLinks[0].v)}</code> (baris #${noSchemeLinks[0].i+1}).`
+    });
+  }
+  if(badImgs.length){
+    warnings.push({
+      k:"Quality Gate: GAMBAR format",
+      v:`Ada <code>${badImgs.length}</code> gambar yang formatnya tidak terlihat seperti URL/path. Contoh: <code>${escapeHtml(badImgs[0].v)}</code> (baris #${badImgs[0].i+1}).`
+    });
+  }
+
+  // Duplicate checks (warnings)
+  const dup = (arr)=> {
+    const map=new Map(); const d=[];
+    arr.forEach((x,idx)=>{
+      const k=String(x||"").trim();
+      if(!k) return;
+      if(map.has(k)) d.push({v:k, first:map.get(k), i:idx});
+      else map.set(k, idx);
+    });
+    return d;
+  };
+  const dupLinks = dup(arrLink);
+  const dupImgs  = dup(arrImg);
+  if(dupLinks.length){
+    warnings.push({
+      k:"Quality Gate: LINK duplikat",
+      v:`Ditemukan <code>${dupLinks.length}</code> duplikasi link. Contoh: <code>${escapeHtml(dupLinks[0].v)}</code> (baris #${dupLinks[0].first+1} & #${dupLinks[0].i+1}).`
+    });
+  }
+  if(dupImgs.length){
+    warnings.push({
+      k:"Quality Gate: GAMBAR duplikat",
+      v:`Ditemukan <code>${dupImgs.length}</code> duplikasi gambar. Contoh: <code>${escapeHtml(dupImgs[0].v)}</code> (baris #${dupImgs[0].first+1} & #${dupImgs[0].i+1}).`
+    });
+  }
+
+  // Title length heuristic (warnings)
+  const longTitles = [];
+  for(let i=0;i<n;i++){
+    const t=String(arrTitle[i]||"");
+    if(t.length>120) longTitles.push({i, v:t});
+  }
+  if(longTitles.length){
+    warnings.push({
+      k:"Quality Gate: Judul terlalu panjang",
+      v:`Ada <code>${longTitles.length}</code> judul > 120 karakter. Contoh (baris #${longTitles[0].i+1}): <code>${escapeHtml(longTitles[0].v.slice(0,140))}${longTitles[0].v.length>140?"…":""}</code>`
+    });
+  }
+
+  return { warnings, errors };
+}
+
+function buildOutputs(payload){
+  const { phTitle, phLink, phImg, phArticle, arrTitle, arrLink, arrImg, arrArticle, n } = payload;
+  const strict = $("chkStrict").checked;
+  const nameFromLink = $("chkNameFromLink").checked;
+
+  const templateMasked = maskTemplateWithTokens(templateText, phTitle, phLink, phImg, phArticle);
+  const outputs = [];
+  const integrityErrors = [];
+  const nameSet = new Set();
+
+  for(let i=0;i<n;i++){
+    const title = arrTitle[i], link = arrLink[i], img = arrImg[i], article = arrArticle[i];
+
+    let out = templateText
+      .split(phTitle).join(title)
+      .split(phLink).join(link)
+      .split(phImg).join(img)
+      .split(phArticle).join(article);
+
+    if(strict){
+      const outMasked = maskOutputToTokens(out, title, link, img, article);
+      if(outMasked !== templateMasked){
+        integrityErrors.push({i:i+1, reason:"Integrity mismatch (ada perubahan selain placeholder)"});
+      }
+    }
+
+    let fname = "artikel.html";
+    if(nameFromLink) fname = filenameFromLink(link);
+    // de-dup
+    if(nameSet.has(fname)){
+      const base = fname.replace(/\.html$/i,"");
+      fname = `${base}-${i+1}.html`;
+    }
+    nameSet.add(fname);
+
+    outputs.push({ fname, out });
+  }
+
+  return { outputs, integrityErrors };
+}
+
+$("btnGenerate").addEventListener("click", async ()=>{
+  try{
+    // prevent double click
+    $("btnGenerate").disabled = true;
+    const v = validateBasics();
+    if(!v.ok){
+      $("btnGenerate").disabled = false;
+      return;
+    }
+
+    const qg = qualityGate(v);
+    if(qg.errors.length){
+      setStatus("bad", `ERROR: Quality Gate gagal — ada ${qg.errors.length} field kosong di data.`);
+      // tampilkan sampai 6 contoh error
+      const ex = qg.errors.slice(0,6).map(e=>`#${e.i+1}`).join(", ");
+      report([
+        {k:"Quality Gate", v:`Field kosong terdeteksi pada baris: <code>${ex}${qg.errors.length>6?"…":""}</code>`},
+        {k:"Catatan", v:`Pastikan setiap baris memiliki <strong>Judul</strong>, <strong>Link</strong>, dan <strong>Gambar</strong>. Baris kosong sebaiknya dihapus.`}
+      ]);
+      $("btnGenerate").disabled = false;
+      return;
+    }
+    if(qg.warnings.length){
+      setStatus("warn", `Quality Gate: ada ${qg.warnings.length} warning — proses tetap dilanjutkan.`);
+      report(qg.warnings);
+    }
+
+    const { outputs, integrityErrors } = buildOutputs(v);
+
+    if(integrityErrors.length){
+      setStatus("bad", `ERROR: Integrity check gagal pada ${integrityErrors.length} file. ZIP dibatalkan.`);
+      report([
+        {k:"Integrity check", v:`Gagal pada: <code>${integrityErrors.map(e=>`#${e.i}`).join(", ")}</code>`},
+        {k:"Saran", v:`Gunakan placeholder yang lebih unik (mis. <code>{{JUDUL}}</code>) dan pastikan template hanya berisi placeholder itu.`}
+      ]);
+      $("btnGenerate").disabled = false;
+      return;
+    }
+
+    let zipName = $("zipName").value.trim() || "artikel-output.zip";
+    if(!zipName.toLowerCase().endsWith(".zip")) zipName += ".zip";
+
+    const zip = new JSZip();
+    for(const f of outputs){
+      zip.file(f.fname, f.out);
+    }
+
+    // Optional: add images into ZIP and rename based on daftar GAMBAR
+    const imgFiles = ((isImgLockOn() && lockedImages.length) ? lockedImages : uploadedImages) || [];
+    if(imgFiles.length){
+      const imgFolder = zip.folder("images");
+      const desired = v.arrImg; // already trimmed & filtered
+
+      if(imgFiles.length !== desired.length){
+        setStatus("warn", `Peringatan: jumlah gambar di-upload (${imgFiles.length}) tidak sama dengan jumlah baris GAMBAR (${desired.length}). Yang diproses = ${Math.min(imgFiles.length, desired.length)}.`);
+      }
+
+      const m = Math.min(imgFiles.length, desired.length);
+      const used = new Set();
+      for(let i=0;i<m;i++){
+        const file = imgFiles[i];
+        const ext = (()=>{
+          const m2 = (file.name || "").match(/\.[a-z0-9]{2,5}$/i);
+          return m2 ? m2[0].toLowerCase() : "";
+        })();
+        let outName = imageNameFromUrl(desired[i], ext);
+        if(!/\.[a-z0-9]{2,5}$/i.test(outName) && ext) outName += ext;
+        if(used.has(outName)){
+          const base = outName.replace(/\.[a-z0-9]{2,5}$/i, "");
+          const eext = (outName.match(/\.[a-z0-9]{2,5}$/i) || [""])[0];
+          outName = `${base}-${i+1}${eext}`;
+        }
+        used.add(outName);
+        imgFolder.file(outName, file);
+      }
+    }
+
+    setStatus("ok", `Sukses: ${outputs.length} file dibuat. Menyiapkan ZIP...`);
+    report([
+      {k:"Output", v:`${outputs.length} file HTML`},
+      {k:"ZIP", v:`<code>${escapeHtml(zipName)}</code>`},
+      {k:"Nama file", v:`${$("chkNameFromLink").checked ? "Mengikuti LINK" : "Default artikel.html (dedup otomatis)"}`},
+      ...(typeof qg !== "undefined" && qg.warnings && qg.warnings.length ? [{k:"Quality Gate", v:`Warning=<code>${qg.warnings.length}</code> (lihat report di atas)`}] : [])
+    ]);
+
+    const blob = await zip.generateAsync({type:"blob"});
+    saveAs(blob, zipName);
+
+    // Auto refresh to avoid accidental duplicate generation
+    if($("chkAutoRefresh").checked){
+      setStatus("ok", "ZIP terunduh. Auto refresh aktif — halaman akan dimuat ulang.");
+      setTimeout(()=>{
+        try{ location.reload(); }catch{ $("btnGenerate").disabled = false; }
+      }, 900);
+    }else{
+      $("btnGenerate").disabled = false;
+    }
+  }catch(err){
+    setStatus("bad", `ERROR: ${err?.message || String(err)}`);
+    report([{k:"Exception", v:`<code>${escapeHtml(err?.stack || String(err))}</code>`}]);
+    $("btnGenerate").disabled = false;
+  }
+});
+
+// Preview button is optional (some builds may not include it)
+const _btnPreview = $("btnPreview");
+if(_btnPreview) _btnPreview.addEventListener("click", ()=>{
+  const v = validateBasics();
+  if(!v.ok) return;
+
+  const { outputs, integrityErrors } = buildOutputs(v);
+  if($("chkStrict").checked && integrityErrors.length){
+    setStatus("bad", `ERROR: Integrity check gagal pada ${integrityErrors.length} file. Preview dibatalkan.`);
+    report([{k:"Integrity check", v:`Gagal pada: <code>${integrityErrors.map(e=>`#${e.i}`).join(", ")}</code>`}]);
+    return;
+  }
+
+  const first = outputs[0];
+  const blob = new Blob([first.out], {type:"text/html"});
+  const url = URL.createObjectURL(blob);
+
+  $("previewName").textContent = first.fname;
+  $("previewFrame").src = url;
+
+  const modal = $("modal");
+  modal.showModal();
+});
+
+$("btnClose").addEventListener("click", ()=>{
+  const modal = $("modal");
+  const iframe = $("previewFrame");
+  try{
+    // revoke object URL
+    const src = iframe.src;
+    iframe.src = "about:blank";
+    if(src.startsWith("blob:")) URL.revokeObjectURL(src);
+  }catch{}
+  modal.close();
+});
+
+
+// ---------------- Image link generator (Index) ----------------
+(function initImageGenerator(){
+  const elDomain = $("imgDomain");
+  const elBase   = $("imgBaseName");
+  const elExt    = $("imgExt");
+  const elCount  = $("imgCount");
+  const elOut    = $("images"); // auto-fill target
+  const btnGen   = $("btnImgGenerate");
+  const btnCopy  = $("btnImgCopy");
+  const btnReset = $("btnImgReset");
+  const st       = $("imgGenStatus");
+
+  // If the UI doesn't exist on this page, skip.
+  if(!elDomain || !elBase || !elExt || !elCount || !elOut || !btnGen || !btnReset) return;
+
+  const KEY_DOMAIN = "runa_img_domain";
+  const KEY_BASE   = "runa_img_base";
+  const KEY_EXT    = "runa_img_ext";
+  const KEY_COUNT  = "runa_img_count";
+  const KEY_OUT    = "runa_img_out";
+
+  const setSt = (type, msg) => {
+    if(!st) return;
+    st.className = `status ${type}`;
+    st.textContent = msg;
+  };
+
+  const ensureTrailingSlash = (url) => {
+    const u = String(url || "").trim();
+    if(!u) return "";
+    return u.endsWith("/") ? u : u + "/";
+  };
+
+  const normalizeExt = (ext) => {
+    let e = String(ext || "").trim();
+    if(!e) return "";
+    if(!e.startsWith(".")) e = "." + e;
+    return e;
+  };
+
+  const saveNow = () => {
+    localStorage.setItem(KEY_DOMAIN, elDomain.value || "");
+    localStorage.setItem(KEY_BASE, elBase.value || "");
+    localStorage.setItem(KEY_EXT, elExt.value || "");
+    localStorage.setItem(KEY_COUNT, elCount.value || "10");
+    localStorage.setItem(KEY_OUT, elOut.value || "");
+  };
+
+  const loadSaved = () => {
+    const d = localStorage.getItem(KEY_DOMAIN);
+    const b = localStorage.getItem(KEY_BASE);
+    const e = localStorage.getItem(KEY_EXT);
+    const c = localStorage.getItem(KEY_COUNT);
+    const o = localStorage.getItem(KEY_OUT);
+
+    if(d) elDomain.value = d;
+    if(b) elBase.value = b;
+    if(e) elExt.value = e;
+    if(c && String(c).trim()) elCount.value = c;
+    if(o) elOut.value = o;
+  };
+
+  const generate = () => {
+    const domain = ensureTrailingSlash(elDomain.value);
+    const base = String(elBase.value || "").trim();
+    const ext = normalizeExt(elExt.value);
+
+    if(!domain || !base || !ext){
+      setSt("bad", "ERROR: Domain/folder, nama file, dan format wajib diisi.");
+      return;
+    }
+
+    const count = Math.max(1, Math.min(5000, parseInt(elCount.value, 10) || 10));
+    elCount.value = String(count);
+
+    const out = [];
+    for(let i=1; i<=count; i++){
+      out.push(`${domain}${base}${i}${ext}`);
+    }
+
+    elOut.value = out.join("\n");
+    saveNow();
+    setSt("ok", `Sukses: ${out.length} link dibuat dan box GAMBAR terisi.`);
+  };
+
+  const reset = () => {
+    elDomain.value = "";
+    elBase.value = "";
+    elExt.value = "";
+    elCount.value = "10";
+    elOut.value = "";
+    localStorage.removeItem(KEY_DOMAIN);
+    localStorage.removeItem(KEY_BASE);
+    localStorage.removeItem(KEY_EXT);
+    localStorage.removeItem(KEY_COUNT);
+    localStorage.removeItem(KEY_OUT);
+    setSt("idle", "Reset selesai.");
+  };
+
+  const copyOut = async () => {
+    const v = elOut.value || "";
+    if(!v){
+      setSt("warn", "Box GAMBAR masih kosong.");
+      return;
+    }
+    if(navigator.clipboard && typeof navigator.clipboard.writeText === "function"){
+      await navigator.clipboard.writeText(v);
+    } else {
+      elOut.focus();
+      elOut.select();
+      document.execCommand("copy");
+    }
+    setSt("ok", "Box GAMBAR dicopy ke clipboard.");
+  };
+
+  // autosave on input
+  elDomain.addEventListener("input", saveNow);
+  elBase.addEventListener("input", saveNow);
+  elExt.addEventListener("input", saveNow);
+  elCount.addEventListener("input", saveNow);
+  elOut.addEventListener("input", saveNow);
+
+  btnGen.addEventListener("click", generate);
+  btnReset.addEventListener("click", reset);
+  if(btnCopy) btnCopy.addEventListener("click", copyOut);
+
+  loadSaved();
+  setSt("idle", "Isi box → klik Generate.");
+})();
+
+
+// ---------------- Anchor <a> → LINK converter (Index) ----------------
+(function initAnchorConverter(){
+  const elIn = $("anchorInput");
+  const elLinks = $("links");
+  const btnConv = $("btnAnchorConvert");
+  const btnClr = $("btnAnchorClear");
+  const st = $("anchorStatus");
+
+  // If UI does not exist on this page, skip.
+  if(!elIn || !elLinks || !btnConv || !btnClr) return;
+
+  const setSt = (type, msg) => {
+    if(!st) return;
+    st.className = `status ${type}`;
+    st.textContent = msg;
+  };
+
+  // Extract URLs from <a ... href="...">...</a> lines (or plain URLs)
+  const extractUrls = (text) => {
+    const out = [];
+    const seen = new Set();
+
+    const rows = String(text || "").split(/\r?\n/);
+
+    for(const rowRaw of rows){
+      const row = String(rowRaw || "").trim();
+      if(!row) continue;
+
+      // Extract all href="..." occurrences per line
+      let matched = false;
+      const reHref = /href\s*=\s*["']([^"']+)["']/gi;
+      let m;
+      while((m = reHref.exec(row))){
+        matched = true;
+        const url = String(m[1] || "").trim();
+        if(url && !seen.has(url)){
+          seen.add(url);
+          out.push(url);
+        }
+      }
+
+      // Fallback: if the line already contains a URL, keep it.
+      if(!matched){
+        const urlMatch = row.match(/https?:\/\/\S+/i);
+        if(urlMatch){
+          const url = urlMatch[0].trim().replace(/[),.;]+$/, ""); // trim common trailing punctuation
+          if(url && !seen.has(url)){
+            seen.add(url);
+            out.push(url);
+          }
+        }
+      }
+    }
+    return out;
+  };
+
+  const convert = () => {
+    const urls = extractUrls(elIn.value);
+    if(!urls.length){
+      setSt("bad", "ERROR: Tidak ada href/URL yang terdeteksi.");
+      return;
+    }
+    elLinks.value = urls.join("\n");
+    setSt("ok", `Sukses: ${urls.length} link masuk ke box LINK.`);
+  };
+
+  const clear = () => {
+    elIn.value = "";
+    setSt("idle", "Tempel anchor HTML → klik Convert.");
+  };
+
+  btnConv.addEventListener("click", convert);
+  btnClr.addEventListener("click", clear);
+
+  setSt("idle", "Tempel anchor HTML → klik Convert.");
+})();
+
+
+// ---------------- JUDUL → AnchorText converter (Index) ----------------
+(function initTitleToAnchor(){
+  const elTitles = $("titles");
+  const elOut = $("anchorInput");
+  const elDomain = $("taDomain");
+  const elText = $("taText");
+  const elLimit = $("taLimit");
+  const elTol = $("taTolerance");
+  const btnConv = $("btnTitleToAnchor");
+  const btnClr = $("btnTitleToAnchorClear");
+  const st = $("titleAnchorStatus");
+
+  // If UI does not exist on this page, skip.
+  if(!elTitles || !elOut || !elDomain || !elText || !btnConv || !btnClr) return;
+
+  const setSt = (type, msg) => {
+    if(!st) return;
+    st.className = `status ${type}`;
+    st.textContent = msg;
+  };
+
+  const normalizeDomain = (d) => {
+    const raw = String(d || "").trim();
+    if(!raw) return "";
+    return raw.endsWith("/") ? raw : (raw + "/");
+  };
+
+  // slug rules:
+  // - lowercase
+  // - remove punctuation/symbols (keep letters+numbers+spaces)
+  // - spaces -> '-'
+  // - take ~limit chars from start but do NOT cut a word
+  // - allow tolerance extra chars to keep last word intact
+  const makeSlug = (title, limit = 50, tolerance = 8) => {
+    // remove diacritics
+    const t0 = String(title || "")
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .toLowerCase();
+
+    // keep only a-z 0-9 and spaces; everything else -> space
+    const cleaned = t0
+      .replace(/[^a-z0-9\s]+/g, " ")
+      .replace(/\s+/g, " ")
+      .trim();
+
+    if(!cleaned) return "artikel.html";
+
+    const words = cleaned.split(" ").filter(Boolean);
+    const hardMax = Math.max(10, Number(limit) + Math.max(0, Number(tolerance)));
+    const softMax = Math.max(10, Number(limit));
+
+    const parts = [];
+    let len = 0;
+
+    for(const w of words){
+      const addLen = (parts.length ? 1 : 0) + w.length; // +1 for '-'
+      const nextLen = len + addLen;
+
+      if(nextLen <= softMax){
+        parts.push(w);
+        len = nextLen;
+        continue;
+      }
+
+      // would exceed soft limit; allow if still within hard limit
+      if(nextLen <= hardMax){
+        parts.push(w);
+        len = nextLen;
+      }
+      break;
+    }
+
+    const slugCore = parts.join("-").replace(/-+/g, "-").replace(/^-|-$/g, "");
+    return (slugCore || "artikel") + ".html";
+  };
+
+  const convert = () => {
+    const domain = normalizeDomain(elDomain.value);
+    const aText = String(elText.value || "");
+    const titles = String(elTitles.value || "")
+      .split(/\r?\n/)
+      .map(s => String(s || "").trim())
+      .filter(Boolean);
+
+    const limit = Number(elLimit?.value ?? 50);
+    const tol = Number(elTol?.value ?? 8);
+
+    if(!titles.length){
+      setSt("bad", "ERROR: Box JUDUL masih kosong.");
+      return;
+    }
+    if(!domain || !/^https?:\/\//i.test(domain)){
+      setSt("bad", "ERROR: Domain wajib valid (contoh: https://domain.com/folder/). ");
+      return;
+    }
+    if(!aText.trim()){
+      setSt("bad", "ERROR: Anchor Text masih kosong.");
+      return;
+    }
+
+    const lines = titles.map((t) => {
+      const slug = makeSlug(t, limit, tol);
+      return `<a href="${domain}${slug}">${aText}</a>`;
+    });
+
+    elOut.value = lines.join("\n");
+    setSt("ok", `Sukses: ${lines.length} anchor dibuat dan masuk ke box ANCHOR.`);
+  };
+
+  const clear = () => {
+    if(elDomain) elDomain.value = "";
+    if(elText) elText.value = "";
+    if(elLimit) elLimit.value = "50";
+    if(elTol) elTol.value = "8";
+    setSt("idle", "Isi JUDUL + Domain + Anchor Text → klik Convert.");
+  };
+
+  btnConv.addEventListener("click", convert);
+  btnClr.addEventListener("click", clear);
+  setSt("idle", "Isi JUDUL + Domain + Anchor Text → klik Convert.");
+})();
+
+
+
+// initial
+setStatus("idle", "Upload template untuk memulai.");
+report([
+  {k:"Catatan", v:"Gunakan placeholder unik agar aman (mis. <code>{{JUDUL}}</code>, <code>{{LINK}}</code>, <code>{{GAMBAR}}</code>, <code>{{ARTIKEL}}</code>)."}
+]);

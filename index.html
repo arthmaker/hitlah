@@ -1,0 +1,266 @@
+<!doctype html>
+<html lang="id">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>HEILHITLAH</title>
+  <link rel="stylesheet" href="./style.css" />
+  <link rel="icon" type="image/png" sizes="32x32" href="favicon.png">
+  <!-- JSZip + FileSaver (CDN) -->
+  <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/file-saver@2.0.5/dist/FileSaver.min.js"></script>
+</head>
+<body>
+  <div class="bg-glow"></div>
+
+  <div class="container">
+    <header class="topbar">
+      <div class="brand">
+          <div class="logo">
+            <img src="https://arthmaker.github.io/hitlah/swastika.png" alt="logo" style="max-width:100%; height:auto;">
+          </div>
+        <div>
+          <h1>Placeholder Generator</h1>
+        </div>
+      </div>
+      <div class="top-actions">
+        <button id="btnLoadSample" class="btn ghost" type="button">Isi Contoh</button>
+        <button id="btnReset" class="btn danger" type="button">Reset</button>
+      </div>
+    </header>
+
+      <div class="hero-image">
+      <img src="https://arthmaker.github.io/hitlah/hitlah.jpg" alt="Hero Placeholder Generator">
+      </div>
+    
+    <main class="grid">
+      <section class="card template-card">
+        <div class="card-head">
+          <h2>1) Template</h2>
+          <span class="pill">Fleksibel</span>
+        </div>
+
+        <div class="dropzone" id="dropzone" tabindex="0" role="button" aria-label="Upload template">
+          <input id="templateFile" type="file" accept=".html,.htm,text/html" />
+          <div class="dz-inner">
+            <div class="dz-icn" aria-hidden="true">⬆</div>
+            <div>
+              <div class="dz-title">Drag & drop template di sini</div>
+              <div class="dz-sub">atau klik untuk memilih file <span class="kbd">.html</span></div>
+            </div>
+          </div>
+        </div>
+        <div class="help">Template: <span id="tplMeta">Belum dimuat</span></div>
+
+        <div class="three">
+          <div class="field">
+            <label>Judul</label>
+            <input id="phTitle" value="*JUDUL*" />
+          </div>
+          <div class="field">
+            <label>Link</label>
+            <input id="phLink" value="*LINK*" />
+          </div>
+          <div class="field">
+            <label>Gambar</label>
+            <input id="phImg" value="*GAMBAR*" />
+          </div>
+          <div class="field">
+            <label>Artikel</label>
+            <input id="phArticle" value="*ARTIKEL*" />
+          </div>
+        </div>
+      </section>
+
+      <section class="card data-card">
+        <div class="card-head">
+          <h2>2) Data</h2>
+          <span class="pill">Satu per baris</span>
+        </div>
+
+        <div class="stack">
+          <div class="field">
+            <label>JUDUL</label>
+            <textarea id="titles" placeholder="1 judul per baris"></textarea>
+          </div>
+
+          <div class="field">
+            <label>Converter JUDUL → AnchorText</label>
+
+            <div class="three" style="margin-top:10px;">
+              <div class="field">
+                <label>Domain</label>
+                <input id="taDomain" placeholder="https://www.pta-banten.go.id/berita/" />
+              </div>
+              <div class="field">
+                <label>Anchor Text</label>
+                <input id="taText" placeholder="mahjongways kasino online" />
+              </div>
+              <div class="field">
+                <label>Batas slug (karakter)</label>
+                <input id="taLimit" type="number" inputmode="numeric" min="20" max="120" value="50" />
+              </div>
+              <div class="field">
+                <label>Toleransi (karakter)</label>
+                <input id="taTolerance" type="number" inputmode="numeric" min="0" max="30" value="8" />
+              </div>
+            </div>
+
+            <div class="actions" style="margin-top:10px;">
+              <button id="btnTitleToAnchor" class="btn primary" type="button">Convert Judul → Anchor</button>
+              <button id="btnTitleToAnchorClear" class="btn danger" type="button">Reset</button>
+            </div>
+            <div id="titleAnchorStatus" class="status idle" style="margin-top:12px;">Isi JUDUL + Domain + Anchor Text → klik Convert.</div>
+          </div>
+
+          <div class="field">
+            <label>Converter Anchor → LINK</label>
+            <textarea id="anchorInput" placeholder="Tempel list &lt;a href=&quot;...&quot;&gt;teks&lt;/a&gt; di sini (1 anchor per baris)"></textarea>
+            <div class="actions" style="margin-top:10px;">
+              <button id="btnAnchorConvert" class="btn primary" type="button">Convert ke Box LINK</button>
+              <button id="btnAnchorClear" class="btn danger" type="button">Reset</button>
+            </div>
+            <div id="anchorStatus" class="status idle" style="margin-top:12px;">Tempel anchor HTML → klik Convert.</div>
+          </div>
+          
+          <div class="field">
+            <label>LINK</label>
+            <textarea id="links" placeholder="1 link per baris"></textarea>
+          </div>
+          
+          <div class="field">
+            <label>Generator Link Gambar (otomatis isi box GAMBAR)</label>
+            <div class="three" style="margin-top:10px;">
+              <div class="field">
+                <label>Domain / Folder</label>
+                <input id="imgDomain" placeholder="https://supernova-66.github.io/rose/" />
+              </div>
+              <div class="field">
+                <label>Nama File (tanpa nomor)</label>
+                <input id="imgBaseName" placeholder="mahjongways-18feb26-3-" />
+              </div>
+              <div class="field">
+                <label>Format</label>
+                <input id="imgExt" placeholder=".webp" />
+              </div>
+              <div class="field">
+                <label>Jumlah Link</label>
+                <input id="imgCount" type="number" inputmode="numeric" min="1" max="5000" value="10" />
+              </div>
+            </div>
+
+            <div class="actions" style="margin-top:10px;">
+              <button id="btnImgGenerate" class="btn primary" type="button">Generate</button>
+              <button id="btnImgCopy" class="btn" type="button">Copy ke Clipboard</button>
+              <button id="btnImgReset" class="btn danger" type="button">Reset</button>
+            </div>
+
+            <div id="imgGenStatus" class="status idle" style="margin-top:12px;">Isi box → klik Generate.</div>
+          </div>
+
+<div class="field">
+            <label>GAMBAR</label>
+            <textarea id="images" placeholder="1 gambar per baris"></textarea>
+          </div>
+
+          <div class="field">
+            <label>ARTIKEL (blok panjang)</label>
+            <textarea id="articles" placeholder="Tempel artikel di sini (pakai marker -###- dan -$$$-) atau upload file di bawah"></textarea>
+            <input id="articleFile" type="file" accept=".txt,.md,.html,.htm,text/plain,text/markdown,text/html" />
+          </div>
+
+        <div class="dropzone" id="dropzone" tabindex="0" role="button" aria-label="Upload template">
+          <div class="field">
+            <label>Upload Gambar (opsional)</label>
+            <input id="imageFiles" type="file" accept="image/*" multiple />
+            <div class="toggle" style="margin-top:10px;">
+              <input id="chkImgLock" type="checkbox" checked />
+              <label for="chkImgLock">
+                <div class="t-title">Drag lock mode (kunci gambar setelah upload)</div>
+                <div class="t-sub">Agar gambar tidak hilang saat kamu upload template / ganti template.</div>
+              </label>
+            </div>
+            <div id="imgUploadInfo" class="help" style="margin-top:10px;">Belum ada gambar yang dikunci.</div>
+              <div class="dz-inner">
+              <div class="dz-icn" aria-hidden="true">⬆</div>
+              <div>
+                <div class="dz-title">Drag & drop Gambar di sini</div>
+                <div class="dz-sub">atau klik untuk memilih file <span class="kbd">.webp</span></div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div id="status" class="status idle">Belum ada proses.</div>
+        <div class="report" id="report"></div>
+
+            <div class="zip-row">
+              <div class="field">
+                <label>Nama ZIP</label>
+                <input id="zipName" value="artikel-output.zip" />
+                <div class="help">Otomatis ditambah <code>.zip</code> jika belum ada.</div>
+              </div>
+              <button id="btnGenerate" class="btn primary" type="button">Generate & Download ZIP</button>
+            </div>
+          </div>
+          
+          <details class="tips">
+            <ul>
+              <li>
+              <div class="toggle-row">
+              <div class="toggle">
+                <input id="chkStrict" type="checkbox" checked />
+                <label for="chkStrict">
+                  <div class="t-title">Strict integrity check</div>
+                  <div class="t-sub">Gagal jika ada perubahan selain placeholder.</div>
+                </label>
+              </div>
+              </li>
+              <li>
+              <div class="toggle">
+                <input id="chkNameFromLink" type="checkbox" checked />
+                <label for="chkNameFromLink">
+                  <div class="t-title">Nama file dari LINK</div>
+                  <div class="t-sub">Jika duplikat, otomatis diberi suffix.</div>
+                </label>
+              </div>
+              </li>
+              <li>
+          <div class="toggle">
+            <input id="chkAutoRefresh" type="checkbox" checked />
+              <label for="chkAutoRefresh">
+                <div class="t-title">Auto refresh setelah download</div>
+                <div class="t-sub">Mencegah double-generate/duplikat jika tombol terklik lagi.</div>
+              </label>
+            </div>
+            </li>
+          </ul>
+          </details>
+          <details class="tips">
+            <summary>Tips cepat</summary>
+            <ul>
+              <li>Kalau placeholder Anda terlalu umum (mis. <code>*LINK*</code>) dan sering bentrok, gunakan format unik seperti <code>{{LINK}}</code>.</li>
+              <li>Jika link tidak valid, nama file fallback menjadi <code>artikel.html</code>.</li>
+              <li>Preview hanya menampilkan file pertama untuk cek cepat.</li>
+            </ul>
+          </details>
+      </section>
+      <footer class="footer">
+        <span>Berjalan 100% di browser • Cocok untuk GitHub Pages • Tidak mengirim data ke server</span>
+      </footer>
+    </div>
+  </div>
+
+  <!-- Preview modal -->
+  <dialog id="modal" class="modal">
+    <div class="modal-head">
+      <div>
+        <div class="modal-title">Preview</div>
+        <div class="modal-sub" id="previewName">-</div>
+      </div>
+      <button id="btnClose" class="btn ghost" type="button">Tutup</button>
+    </div>
+    <iframe id="previewFrame" title="Preview HTML"></iframe>
+  </dialog>
+  <script src="./app.js"></script>
+</body>
+</html>
