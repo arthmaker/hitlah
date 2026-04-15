@@ -43,7 +43,7 @@ body{
 }
 
 .hero-image img{
-  width:100%;
+  width:150%;
   height:180px;       /* samakan dengan max-height */
   object-fit:cover;   /* crop otomatis biar nggak gepeng */
   display:block;
